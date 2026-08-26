@@ -1,0 +1,10 @@
+path: C:\Users\aclie\OneDrive\Documents\LARP\htn-wallhacks\data\mixed
+train:
+  - visdrone_train.txt
+  - visdrone_train.txt
+  - crowdhuman_train.txt
+val:
+  - visdrone_val.txt
+  - crowdhuman_val.txt
+names:
+  0: person

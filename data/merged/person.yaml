@@ -1,0 +1,5 @@
+path: C:\Users\aclie\OneDrive\Documents\LARP\htn-wallhacks\data\merged
+train: images/train
+val: images/val
+names:
+  0: person

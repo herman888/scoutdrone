@@ -1,0 +1,7 @@
+path: C:\Users\aclie\OneDrive\Documents\LARP\htn-wallhacks\data\mixed
+train:
+  - crowdhuman_val.txt
+val:
+  - crowdhuman_val.txt
+names:
+  0: person
