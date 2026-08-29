@@ -289,19 +289,29 @@ def draw(frame, tracked_dets, class_colors):
                 cv2.line(frame, (cx, cy), (cx, cy+sy*bl), (0,0,255), 3)
 
 
-def inference_loop(hef_path, is_coco, is_person=False):
+def inference_loop(hef_path, is_coco, is_person=False, use_usb=False):
     global latest_frame
     _BT = getattr(sv, "ByteTrack", None) or getattr(sv, "ByteTracker", None)
     tracker = _BT(lost_track_buffer=30) if (_HAVE_SV and _BT) else None
 
-    picam2 = Picamera2()
-    cfg = picam2.create_preview_configuration(
-        main={"size": (640, 480), "format": "RGB888"},
-        controls={"FrameRate": 30}
-    )
-    picam2.configure(cfg)
-    picam2.start()
-    time.sleep(1)
+    picam2 = None
+    usb_cap = None
+    if use_usb:
+        usb_cap = cv2.VideoCapture("/dev/video8")
+        usb_cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        usb_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        usb_cap.set(cv2.CAP_PROP_FPS, 30)
+        if not usb_cap.isOpened():
+            raise RuntimeError("Failed to open USB camera /dev/video8")
+    else:
+        picam2 = Picamera2()
+        cfg = picam2.create_preview_configuration(
+            main={"size": (640, 480), "format": "RGB888"},
+            controls={"FrameRate": 30}
+        )
+        picam2.configure(cfg)
+        picam2.start()
+        time.sleep(1)
 
     with Hailo(hef_path) as hailo:
         t0 = time.time()
@@ -311,8 +321,13 @@ def inference_loop(hef_path, is_coco, is_person=False):
         print("Click stream to lock a target. /lock?id=N  /unlock  /tracks")
         try:
             while True:
-                bgr = picam2.capture_array()  # picamera2 RGB888 is actually BGR
-                bgr = cv2.rotate(bgr, cv2.ROTATE_180)  # camera is physically mounted upside down
+                if use_usb:
+                    ok, bgr = usb_cap.read()
+                    if not ok:
+                        continue
+                else:
+                    bgr = picam2.capture_array()  # picamera2 RGB888 is actually BGR
+                    bgr = cv2.rotate(bgr, cv2.ROTATE_180)  # CSI camera is physically mounted upside down
                 rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
                 lb, scale, px, py = letterbox(rgb)
                 raw = hailo.run(lb)
@@ -352,7 +367,10 @@ def inference_loop(hef_path, is_coco, is_person=False):
         except KeyboardInterrupt:
             pass
         finally:
-            picam2.stop()
+            if use_usb:
+                usb_cap.release()
+            else:
+                picam2.stop()
 
 
 def main():
@@ -361,12 +379,13 @@ def main():
     ap.add_argument("--coco", action="store_true", help="Use COCO NMS output format")
     ap.add_argument("--person", action="store_true", help="Use single-class person model")
     ap.add_argument("--port", type=int, default=8080)
+    ap.add_argument("--usb", action="store_true", help="Use USB camera (/dev/video8) instead of CSI camera")
     args = ap.parse_args()
 
     is_coco = args.coco or "yolov11m_h10" in args.hef or "yolov8m_h10" in args.hef or "personface" in args.hef
     is_person = args.person or "htn_r" in args.hef  # matches htn_r1/r2b/r3/r4 (all single-class person models)
 
-    t = threading.Thread(target=inference_loop, args=(args.hef, is_coco, is_person), daemon=True)
+    t = threading.Thread(target=inference_loop, args=(args.hef, is_coco, is_person, args.usb), daemon=True)
     t.start()
     time.sleep(3)
     app.run(host="0.0.0.0", port=args.port, threaded=True, request_handler=NoDelayRequestHandler)

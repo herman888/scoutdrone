@@ -148,6 +148,29 @@ Trixie), in order:**
 11. `bash ~/larp/scripts/switch_model.sh aerial` — confirmed working end to end
     (camera + NPU + model + stream, 30fps, no errors) as of 2026-08-29.
 
+## Innomaker U20CAM-1080P (USB) added as a second camera option (2026-08-29)
+Plugged into USB, identifies as `Innomaker-U20CAM-1080PD&N-S1` (Day&Night — has
+IR-cut switching for better low-light than the IMX219). `infer_stream.py` extended
+with a `--usb` flag to capture from it (`/dev/video8`, via `cv2.VideoCapture`) instead
+of the CSI camera, reusing the same Hailo inference/streaming pipeline for a fair
+comparison. Note: no 180° rotation is applied to the USB camera path (that fix is
+CSI-camera-specific, for its known upside-down mounting).
+
+**Measured result: ~9.7fps on USB vs ~30fps on CSI.** Root cause confirmed via
+`lsusb -t` (shows `480M` bus speed) and `top` (only 30% CPU, mostly idle) — this is a
+**USB 2.0 bandwidth ceiling**, not a compute/decode bottleneck (initial guess that it
+was MJPEG-decode-bound was wrong, corrected after actually checking). The camera
+negotiates at USB2 speed regardless of which physical port it's in (device's own
+spec, common for budget UVC cameras). Untested fix if lower resolution is acceptable:
+drop to 640x480 to fit more frames in the same bandwidth budget.
+
+The CSI/IMX219 camera will always win on raw throughput given its hardware ISP
+pipeline advantage — the Innomaker's actual value proposition is low-light
+performance, not speed. Real comparison still needed: same-scene, same-lighting
+test to judge whether the Day&Night capability is worth the FPS tradeoff for
+specific conditions (e.g. dusk/night testing, where the IMX219 struggled badly
+in earlier sessions).
+
 ## Official Hailo personface model deployed as interim option (2026-08-26)
 While DFC/HailoRT fix is pending (needs account/Pi access, see below), found and deployed
 Hailo's own official pre-compiled `yolov5s_personface.hef` (person+face, YOLOv5s-based) from
