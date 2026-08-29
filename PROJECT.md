@@ -1,13 +1,5 @@
 # HTN Wallhacks — Aerial Person Detection
 
-> **Before running anything**: `scripts/*.py` and `scripts/*.sh` have hardcoded absolute
-> Windows paths (e.g. `C:\Users\aclie\OneDrive\Documents\LARP\htn-wallhacks\...`) baked in
-> as `ROOT`/`DATA`/`OUT` constants — these point at the original machine and will not work
-> here unedited. Update those paths per-script before running training, dataset builds, or
-> compile scripts. Raw datasets (VisDrone, CrowdHuman) aren't included in this repo —
-> regenerate them with `scripts/download_visdrone.py` and
-> `scripts/download_build_crowdhuman.sh`.
-
 ## Concept
 UAV hovers at 20-40m altitude, detects people from above, transmits detection data to ground unit. Aerial ISR / overwatch.
 
@@ -79,6 +71,82 @@ inferences at ~28ms each on the Pi. Deployment-ready, just not currently running
 ~/larp/models/htn_r2b.hef` (auto-detects person-class via `"htn_r1" in args.hef`... NOTE:
 this won't match "htn_r2b" — need to add `--person` flag explicitly or extend the
 autodetect string match when next touching infer_stream.py).
+
+## SD card failure + fresh rebuild (2026-08-26 to 2026-08-29)
+The original SD card developed genuine EXT4 filesystem corruption (checksum-invalid
+errors spreading across different files over time — a classic failing-media pattern,
+not a one-time software glitch). Leading suspect: undervoltage during heavy write load
+(the HailoRT upgrade below involves kernel module compiles + package installs +
+multiple reboots in quick succession) combined with a lower-endurance card. Replaced
+with a SanDisk 64GB card (initially had a write-protect issue during flashing — turned
+out to be a stale/offline Windows disk state left over from an earlier WSL2
+investigation, not the card itself), but ultimately used a PNY 64GB card instead for
+time reasons — **worth swapping back to the SanDisk when there's time, PNY has a
+weaker endurance track record for this kind of write-heavy embedded use.**
+
+**Full rebuild procedure that worked (fresh Raspberry Pi OS Lite 64-bit, Debian 13
+Trixie), in order:**
+1. Flash via Raspberry Pi Imager, Advanced Options (Ctrl+Shift+X) pre-configured:
+   hostname `larp-pi`, SSH enabled, username `evanl1307`, WiFi SSID "This is the way" +
+   country CA. Skip Raspberry Pi Connect (unnecessary cloud dependency, plain SSH is
+   all that's used).
+2. First boot: camera wasn't detected at all (`rpicam-hello --list-cameras` → "No
+   cameras available", zero CSI-related dmesg activity). Root cause was the physical
+   ribbon cable connection, not software — `camera_auto_detect=1` was already correctly
+   set in `/boot/firmware/config.txt`. Fixed by physically reseating the cable (fully
+   open the CSI port's latch, reseat straight, close latch firmly) — the Pi 5 has two
+   CSI ports (CAM/DISP 0 and 1); this camera lives on **CAM1**. Along the way, also
+   explicitly added `dtoverlay=imx219` to config.txt (belt-and-suspenders alongside
+   auto-detect; not required once the physical connection was fixed, but doesn't
+   hurt and got us a much more useful `-EREMOTEIO` I2C error instead of total silence
+   while debugging).
+3. `ssh-keygen -R <pi-ip>` on the client machine first — a fresh OS means a new SSH
+   host key, which will otherwise hard-block the connection with a MITM warning.
+4. Install HailoRT 5.3.0 (matching DFC) from
+   `hailo.ai/developer-zone/software-downloads/` → Accelerators → Hailo-10H → HailoRT
+   sub-package → **ARM64** architecture (not x86 — that's only for the DFC compiler on
+   the PC) → Linux. Three files needed: `hailort-pcie-driver_*_all.deb` (driver +
+   firmware), `hailort_*_arm64.deb` (runtime library), `hailort-*-cp313-cp313-linux_aarch64.whl`
+   (Python bindings — check `python3 --version` on the Pi first to match the cp3xx tag).
+   No older/version-matched DFC is available on the portal (only latest is listed,
+   and the download page 403s without login) — upgrading the Pi to match DFC turned
+   out easier than downgrading DFC to match the Pi.
+5. `sudo dpkg -i` the driver .deb — **will fail** the DKMS kernel module build with
+   `error: implicit declaration of function 'del_timer_sync'` (a real bug: Hailo's
+   driver source uses a pre-6.x Linux timer API function that newer kernels removed).
+   Fix (safe, well-known rename, not a hack):
+   ```
+   sudo apt install -y dkms   # often not preinstalled
+   sudo sed -i 's/del_timer_sync/timer_delete_sync/' /usr/src/hailort-pcie-driver/linux/vdma/monitor.c
+   sudo sed -i 's/del_timer_sync/timer_delete_sync/' /usr/src/hailo1x_pci-5.3.0/linux/vdma/monitor.c
+   sudo sed -i 's/del_timer_sync/timer_delete_sync/' /var/lib/dkms/hailo1x_pci/5.3.0/build/linux/vdma/monitor.c
+   sudo dpkg --configure -a
+   ```
+   `sudo dkms status` should then show `installed`.
+6. `sudo dpkg -i` the runtime .deb, `sudo apt install -y python3-pip` (not present on
+   Lite by default — if it 404s on a sub-dependency, just `sudo apt update` first, it's
+   a stale index issue not a real problem), then
+   `python3 -m pip install --break-system-packages ~/hailort-*.whl`.
+7. `sudo reboot` (needed for the driver/firmware; not needed again for the pip step).
+8. WiFi power-save fix (this is what actually fixes the "randomly drops off the
+   network entirely" symptom, not anything code-side):
+   ```
+   sudo tee /etc/NetworkManager/conf.d/wifi-powersave-off.conf << 'EOF'
+   [connection]
+   wifi.powersave = 2
+   EOF
+   sudo systemctl restart NetworkManager
+   ```
+9. Restore `~/larp/scripts/` and `~/larp/models/` from the PC backup (kept at
+   `htn-wallhacks/pi_backup_2026-08-26/`) via `scp -r`.
+10. Install the picamera2/opencv/Flask stack — **use apt, not pip**, for
+    picamera2/opencv specifically (proper libcamera/GPU integration on Pi):
+    ```
+    sudo apt install -y python3-opencv python3-picamera2 python3-flask
+    python3 -m pip install --break-system-packages supervision
+    ```
+11. `bash ~/larp/scripts/switch_model.sh aerial` — confirmed working end to end
+    (camera + NPU + model + stream, 30fps, no errors) as of 2026-08-29.
 
 ## Official Hailo personface model deployed as interim option (2026-08-26)
 While DFC/HailoRT fix is pending (needs account/Pi access, see below), found and deployed
