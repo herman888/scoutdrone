@@ -61,8 +61,10 @@ INPUT_SIZE  = 640
 
 # ── shared state ──────────────────────────────────────────────────────────────
 frame_lock   = threading.Lock()
+frame_ready  = threading.Condition(frame_lock)
 boxes_lock   = threading.Lock()
 latest_frame = b""
+frame_version = 0
 latest_boxes = [[]]   # list of (x1,y1,x2,y2,conf,cls_id,label,track_id)
 fps_display  = [0.0]
 locked_id    = [None] # track_id of locked target
@@ -121,13 +123,27 @@ def fps_route():
 @app.route('/stream')
 def stream():
     def gen():
+        # Emit only newly-produced frames. Repeating the same JPEG in a tight
+        # loop lets browsers and iOS WebViews buffer stale video.
+        last_version = -1
         while True:
-            with frame_lock:
+            with frame_ready:
+                frame_ready.wait_for(lambda: frame_version != last_version, timeout=1.0)
+                if frame_version == last_version:
+                    continue
                 frame = latest_frame
+                last_version = frame_version
             if frame:
                 yield b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame + b'\r\n'
-            time.sleep(0.005)
-    return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
+    return Response(
+        gen(),
+        mimetype='multipart/x-mixed-replace; boundary=frame',
+        headers={
+            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+            'Pragma': 'no-cache',
+            'X-Accel-Buffering': 'no',
+        },
+    )
 
 @app.route('/lock')
 def lock_target():
@@ -290,7 +306,7 @@ def draw(frame, tracked_dets, class_colors):
 
 
 def inference_loop(hef_path, is_coco, is_person=False, use_usb=False):
-    global latest_frame
+    global latest_frame, frame_version
     _BT = getattr(sv, "ByteTrack", None) or getattr(sv, "ByteTracker", None)
     tracker = _BT(lost_track_buffer=30) if (_HAVE_SV and _BT) else None
 
@@ -358,12 +374,10 @@ def inference_loop(hef_path, is_coco, is_person=False, use_usb=False):
 
 
                 _, buf = cv2.imencode('.jpg', display, [cv2.IMWRITE_JPEG_QUALITY, 65])
-                with frame_lock:
+                with frame_ready:
                     latest_frame = buf.tobytes()
-
-                if tracked:
-                    for x1,y1,x2,y2,c,cls,lbl,tid in tracked:
-                        print(f"  {lbl}#{tid} {c:.2f}  [{x1},{y1},{x2},{y2}]")
+                    frame_version += 1
+                    frame_ready.notify_all()
         except KeyboardInterrupt:
             pass
         finally:

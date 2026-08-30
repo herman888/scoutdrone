@@ -224,6 +224,41 @@ working, and has the best pure-aerial accuracy of anything so far (mAP50 0.554).
 real, valid trained models with genuinely better PC-side accuracy/versatility — they're just
 not currently deployable to this specific Pi without one of the two fixes above.
 
+### UPDATE 2026-08-29: version mismatch RULED OUT — R3 still hangs on matched 5.3.0
+The SD-card rebuild (see rebuild procedure above) installed **HailoRT 5.3.0** on the Pi,
+matching DFC 5.3.0. Confirmed live: `hailortcli fw-control identify` → `Firmware Version:
+5.3.0`, and the Python `hailo_platform` bindings report `5.3.0`. So the leading-suspect
+version gap is now closed.
+
+Re-tested `htn_r3.hef` (the maxopt build, already on the Pi) in isolation on the matched
+firmware anyway: **still hangs.** The test process sat inside `hailo.run()` for 9+ minutes
+at 0.2% CPU on a dummy zero tensor before being killed — identical symptom to before.
+(Note: a Python `signal.alarm` guard does NOT interrupt this hang; it's blocked in the
+native call. Use a child-process + hard-kill harness — `scripts/hef_runtest2.py` on the Pi —
+to test HEFs safely.)
+
+**Conclusion: the DFC/HailoRT version mismatch was not the root cause.** Consistent with
+the caveat above (R1_v2 and R2b compiled on the same DFC 5.3.0 and run fine). The real
+differentiator is R3/R4's mixed-domain (VisDrone + CrowdHuman) weight distribution
+interacting with multi-context scheduling — the "Real fixes" list above is obsolete.
+
+**R4 compiled and tested 2026-08-29, same result.** Compiled `htn_r4.hef` fresh with DFC
+5.3.0 (`scripts/compile_hailo_r4.sh`, default opt level, VisDrone calib) → clean 5-context
+HEF, 12 MB, 18 min. Tested on the Pi with `hef_runtest2.py`: device opens + configures
+fine, then `hailo.run()` on a dummy tensor **hangs** (killed after 25 s, 0/5 inferences).
+Compared R4's compile log against R2b's (the working YOLO11s): identical calib size (64),
+identical forced optimization level 0, identical single-context-fail resource profile
+(~153/80), identical 5-context final partition. The compiles are indistinguishable — only
+the trained weights differ. This is a Hailo toolchain bug: clean compile, silent runtime
+deadlock, no diagnostic.
+
+**DECISION 2026-08-29: R4 deployment abandoned.** The live `yolov5s_personface.hef`
+(closerange mode) is genuinely useful and covers the close-range need; R2b covers aerial.
+The 2-model `switch_model.sh` setup is the production answer. R4/R3 stay PC-side-only
+models. If revisited later: retrain a YOLO11n mixed model (smaller, fewer contexts, and
+YOLO11n already runs fine multi-context as R1_v2), or open a Hailo support ticket (needs
+Hailo account). Do NOT burn more time recompiling R3/R4 with different knobs — proven dead.
+
 ## In progress: R3, mixed close+aerial range (1-40m) dataset
 Started 2026-08-25 after user wanted a more versatile model (not just 20-40m aerial) —
 R1/R2 only ever saw VisDrone (aerial-only) data and completely fail on close-range/indoor
