@@ -1,0 +1,551 @@
+/* Syntax highlighting for code blocks */
+@import "highlight.js/styles/github.css";
+
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+body {
+  font-family: "Inter", sans-serif;
+  color: #333;
+  background-color: #f5f5f5;
+  margin: 0;
+  padding: 0;
+}
+
+/* Dark Mode - Professional Deep Colors */
+.dark body {
+  background-color: #111827; /* Professional dark gray */
+  color: #f3f4f6;
+}
+
+/* Custom scrollbar styles for virtual scrolling and dark mode compliance */
+@layer utilities {
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    @apply bg-gray-100 dark:bg-gray-800 rounded;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-gray-400 dark:bg-gray-600 rounded hover:bg-gray-500 dark:hover:bg-gray-500;
+  }
+
+  /* Firefox scrollbar styling */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #9ca3af #f3f4f6; /* Light gray thumb on light gray track */
+  }
+
+  /* Dark mode Firefox scrollbar - class-based */
+  .dark .scrollbar-thin {
+    scrollbar-color: #6b7280 #374151;
+  }
+
+  /* Simplified 2-tier dark mode utility classes */
+  .dark-bg {
+    @apply bg-gray-50 dark:bg-gray-900;
+  }
+
+  .dark-panel {
+    @apply bg-white dark:bg-gray-800;
+  }
+
+  .dark-input {
+    @apply bg-white dark:bg-gray-700;
+  }
+
+  .dark-divider {
+    @apply border-gray-200 dark:border-gray-700;
+  }
+
+  /* Glassmorphism utilities */
+  .glassmorphism {
+    @apply backdrop-blur-md bg-white/80 dark:bg-gray-800/80 border border-white/20 dark:border-gray-600/30;
+  }
+
+  .glassmorphism-strong {
+    @apply backdrop-blur-xl bg-white/90 dark:bg-gray-800/90 border border-white/30 dark:border-gray-600/40;
+  }
+}
+
+/* Hide the reCAPTCHA v3 badge while showing a minimal notice elsewhere */
+.grecaptcha-badge { visibility: hidden; }
+
+/* reCAPTCHA Notice - Professional Dark Mode Support */
+.recaptcha-notice {
+  position: fixed;
+  right: 12px;
+  bottom: 8px;
+  z-index: 9999;
+  font-size: 11px;
+  color: #64748b;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: saturate(180%) blur(8px);
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  transition: all 0.2s ease;
+}
+
+/* Dark mode reCAPTCHA - Professional styling */
+.dark .recaptcha-notice {
+  color: #9ca3af;
+  background: rgba(17, 24, 39, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.recaptcha-notice a {
+  color: #0ea5e9;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.recaptcha-notice a:hover {
+  color: #0284c7;
+  text-decoration: underline;
+}
+
+.dark .recaptcha-notice a {
+  color: #38bdf8;
+}
+
+.dark .recaptcha-notice a:hover {
+  color: #0ea5e9;
+}
+
+@media (max-width: 640px) {
+  .recaptcha-notice {
+    position: static;
+    display: block;
+    text-align: center;
+    margin: 8px;
+  }
+}
+
+/* Dashboard Cards - Clean Professional Design with enhanced shadows */
+.dashboard-card {
+  @apply bg-white dark:bg-gray-900 rounded-xl p-6 border border-gray-100 dark:border-gray-800 transition-all duration-200;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.dark .dashboard-card {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+}
+
+.dashboard-card:hover {
+  @apply transform hover:scale-[1.01] border-gray-200 dark:border-gray-700;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.15), 0 4px 6px -2px rgba(0, 0, 0, 0.08);
+}
+
+.dark .dashboard-card:hover {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+}
+
+/* Professional KPI Cards with clean design and enhanced shadows */
+.kpi-card {
+  @apply bg-white dark:bg-gray-900 rounded-xl p-6 border border-gray-100 dark:border-gray-800 transition-all duration-200;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.dark .kpi-card {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+}
+
+.kpi-card:hover {
+  @apply transform hover:scale-[1.01] border-blue-200;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.02) 0%, rgba(99, 102, 241, 0.02) 100%);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.15), 0 4px 6px -2px rgba(0, 0, 0, 0.08);
+}
+
+.dark .kpi-card:hover {
+  @apply border-blue-800/50;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(99, 102, 241, 0.08) 100%);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+}
+
+.kpi-number {
+  @apply text-2xl md:text-3xl font-bold text-gray-900 dark:text-gray-100 mb-2;
+  font-size: 22px; /* Larger KPI numbers as requested */
+}
+
+@media (min-width: 640px) {
+  .kpi-number {
+    font-size: 24px;
+  }
+}
+
+.kpi-delta {
+  @apply inline-flex items-center px-2.5 py-1 rounded-full text-sm font-medium shadow-sm;
+}
+
+.kpi-delta.positive {
+  @apply bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 border border-green-200 dark:border-green-700;
+}
+
+.kpi-delta.negative {
+  @apply bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200 border border-red-200 dark:border-red-700;
+}
+
+.kpi-delta.neutral {
+  @apply bg-gray-100 dark:bg-gray-900/30 text-gray-800 dark:text-gray-200 border border-gray-200 dark:border-gray-700;
+}
+
+.kpi-sparkline {
+  @apply h-1 flex-1 opacity-60 ml-4 rounded-full;
+}
+
+/* AI Agent Message Styles */
+.ai-message-content {
+  line-height: 1.6;
+}
+
+.ai-message-content h2 {
+  @apply text-lg font-semibold mt-4 mb-2 text-gray-800 dark:text-gray-200;
+}
+
+.ai-message-content h3 {
+  @apply text-base font-medium mt-3 mb-2 text-gray-700 dark:text-gray-300;
+}
+
+.ai-message-content h2:first-child,
+.ai-message-content h3:first-child {
+  margin-top: 0;
+}
+
+.ai-message-content ul {
+  @apply space-y-2 mb-4;
+}
+
+.ai-message-content li {
+  @apply flex items-start;
+}
+
+.ai-message-content strong {
+  @apply font-semibold;
+}
+
+/* Table Styles - Perfect Alignment & Professional Design */
+.data-table {
+  @apply w-full border-collapse bg-white dark:bg-gray-900 rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-gray-700;
+}
+
+.data-table th {
+  @apply text-sm border-b border-gray-200 dark:border-gray-700;
+}
+
+.data-table td {
+  @apply py-4 px-6 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-800;
+}
+
+/* Professional zebra striping with subtle contrast */
+.data-table tbody tr:nth-child(even) {
+  @apply bg-gray-50/30 dark:bg-gray-800/20;
+}
+
+.data-table tbody tr:nth-child(odd) {
+  @apply bg-white dark:bg-gray-900;
+}
+
+/* Sophisticated hover effects */
+.data-table tbody tr:hover {
+  @apply bg-gray-50 dark:bg-gray-800/40 transition-colors duration-150;
+}
+
+/* Enhanced email and phone links with hover underline */
+.email-link, .phone-link,
+.data-table a[href^="mailto:"], 
+.data-table a[href^="tel:"] {
+  @apply text-blue-600 dark:text-blue-400 transition-all duration-200 font-medium;
+}
+
+.email-link:hover, .phone-link:hover,
+.data-table a[href^="mailto:"]:hover, 
+.data-table a[href^="tel:"]:hover {
+  @apply text-blue-800 dark:text-blue-300 underline;
+}
+
+/* Button Styles with Clean Dark Mode */
+.btn {
+  @apply px-4 py-2 rounded-md font-medium transition-colors duration-200;
+}
+
+.btn-primary {
+  @apply bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600;
+}
+
+.btn-secondary {
+  @apply bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600;
+}
+
+.btn-success {
+  @apply bg-green-600 text-white hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-600;
+}
+
+.btn-danger {
+  @apply bg-red-600 text-white hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600;
+}
+
+/* Enhanced Status Badge Styles with Dark Mode Support and status dots */
+.badge {
+  @apply inline-flex items-center px-3 py-1.5 text-xs font-semibold rounded-full shadow-sm border transition-all duration-200;
+}
+
+.badge::before {
+  content: '';
+  @apply w-2 h-2 rounded-full mr-2 flex-shrink-0;
+}
+
+.badge-success {
+  @apply bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 border-green-200 dark:border-green-700;
+}
+
+.badge-success::before {
+  @apply bg-green-500 dark:bg-green-400;
+}
+
+.badge-warning {
+  @apply bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 border-yellow-200 dark:border-yellow-700;
+}
+
+.badge-warning::before {
+  @apply bg-yellow-500 dark:bg-yellow-400;
+}
+
+.badge-danger {
+  @apply bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200 border-red-200 dark:border-red-700;
+}
+
+.badge-danger::before {
+  @apply bg-red-500 dark:bg-red-400;
+}
+
+.badge-info {
+  @apply bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 border-blue-200 dark:border-blue-700;
+}
+
+.badge-info::before {
+  @apply bg-blue-500 dark:bg-blue-400;
+}
+
+.badge-gray {
+  @apply bg-gray-100 dark:bg-gray-900/30 text-gray-800 dark:text-gray-200 border-gray-200 dark:border-gray-700;
+}
+
+.badge-gray::before {
+  @apply bg-gray-500 dark:bg-gray-400;
+}
+
+/* NEW status badge - clean and modern */
+.badge-new {
+  @apply bg-blue-500 dark:bg-blue-600 text-white border-blue-600 dark:border-blue-500 font-bold;
+}
+
+.badge-new::before {
+  @apply bg-blue-400 dark:bg-blue-300;
+}
+
+/* Enhanced status pills with status dots and improved styling */
+.status-pill {
+  @apply inline-flex items-center px-3 py-1.5 text-xs font-semibold rounded-full shadow-sm border transition-all duration-200;
+}
+
+.status-pill::before {
+  content: '';
+  @apply w-2 h-2 rounded-full mr-2 flex-shrink-0;
+}
+
+.status-pill-active {
+  @apply bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 border border-green-200 dark:border-green-700;
+}
+
+.status-pill-active::before {
+  @apply bg-green-500 dark:bg-green-400;
+}
+
+.status-pill-pending {
+  @apply bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 border border-yellow-200 dark:border-yellow-700;
+}
+
+.status-pill-pending::before {
+  @apply bg-yellow-500 dark:bg-yellow-400;
+}
+
+.status-pill-overdue {
+  @apply bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200 border border-red-200 dark:border-red-700;
+}
+
+.status-pill-overdue::before {
+  @apply bg-red-500 dark:bg-red-400;
+}
+
+.status-pill-inactive {
+  @apply bg-gray-100 dark:bg-gray-900/30 text-gray-800 dark:text-gray-200 border border-gray-200 dark:border-gray-700;
+}
+
+.status-pill-inactive::before {
+  @apply bg-gray-500 dark:bg-gray-400;
+}
+
+/* Input Styles with Dark Mode */
+.input {
+  @apply dark-input border dark-divider rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-transparent text-gray-900 dark:text-gray-100;
+}
+
+/* Global custom scrollbar with dark mode support */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+/* Dark mode global scrollbar */
+@media (prefers-color-scheme: dark) {
+  ::-webkit-scrollbar-track {
+    background: #374151;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    background: #6b7280;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    background: #9ca3af;
+  }
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: #374151;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #6b7280;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* Enhanced Typing Indicator Animation for Assistant */
+.typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+}
+
+.typing-indicator span {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #22c55e; /* Green color for dots */
+  animation: pulseGreen 1.5s infinite ease-in-out;
+  will-change: transform, opacity;
+}
+
+.typing-indicator span:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.typing-indicator span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-indicator span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+/* Message bubble styles */
+.message-bubble {
+  @apply rounded-2xl px-4 py-3 max-w-xs md:max-w-md lg:max-w-lg xl:max-w-xl border transition-all duration-200;
+}
+
+.message-bubble.user {
+  @apply bg-blue-600 dark:bg-blue-500 text-white border-blue-500 dark:border-blue-400;
+}
+
+.message-bubble.assistant {
+  @apply dark-panel border-gray-200 dark:border-gray-600 text-gray-900 dark:text-gray-100;
+}
+
+/* Thin custom scrollbar for lists */
+.custom-scrollbar {
+  scrollbar-width: thin;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply bg-gray-300 dark:bg-gray-600;
+  border-radius: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-400 dark:bg-gray-500;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  @apply bg-transparent dark:bg-gray-800/50;
+}
+
+/* Skeleton shimmer animation */
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+/* Enhanced backdrop blur support */
+@supports (backdrop-filter: blur(10px)) {
+  .backdrop-blur-md {
+    backdrop-filter: blur(12px);
+  }
+  .backdrop-blur-sm {
+    backdrop-filter: blur(4px);
+  }
+  .backdrop-blur-xl {
+    backdrop-filter: blur(24px);
+  }
+}
+
+/* Fallback for browsers that don't support backdrop-filter */
+@supports not (backdrop-filter: blur(10px)) {
+  .backdrop-blur-md {
+    background-color: rgba(0, 0, 0, 0.3);
+  }
+  .backdrop-blur-sm {
+    background-color: rgba(255, 255, 255, 0.9);
+  }
+  .backdrop-blur-xl {
+    background-color: rgba(255, 255, 255, 0.95); /* Light mode fallback */
+  }
+  .dark .backdrop-blur-xl {
+    background-color: rgba(0, 0, 0, 0.4); /* Dark mode fallback */
+  }
+}

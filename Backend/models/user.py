@@ -1,0 +1,130 @@
+"""Defines the User SQLModel, representing users within the application, including their attributes and relationships."""
+from datetime import datetime
+from decimal import Decimal
+from typing import TYPE_CHECKING, Optional
+from uuid import UUID as PythonUUID
+
+from sqlalchemy import Column, String, DateTime, Numeric
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
+from sqlmodel import Field, Relationship, SQLModel
+
+from Backend.utils.datetime_utils import create_audit_datetime
+
+if TYPE_CHECKING:
+    from Backend.models.property import Property
+    from Backend.models.tenant import Tenant
+    from Backend.models.maintenance import MaintenanceRequest
+    from Backend.models.accounting.integration import Integration
+    from Backend.models.ownership_entity import OwnershipEntity
+    from Backend.models.calendar import CustomReminder
+    from Backend.models.vendor import UserVendor
+
+
+class User(SQLModel, table=True):
+    __tablename__ = "users"  # type: ignore
+
+    id: PythonUUID = Field(
+        default=None,
+        sa_column=Column(PG_UUID(as_uuid=True), primary_key=True)
+    )
+    email: str = Field(unique=True, index=True)
+    first_name: str | None = None
+    last_name: str | None = None
+    # <-- force String instead of Enum
+    user_type: str = Field(default="LANDLORD", sa_column=Column(String))
+    phone: str | None = None
+    address: str | None = None
+    city: str | None = None
+    province: str | None = None
+    postal_code: str | None = None
+    profile_image_url: str | None = None
+    is_active: bool = Field(default=True)
+    is_admin: bool = Field(default=False)
+    
+    # Tax preference fields - stores multiple default taxes as JSONB array
+    default_taxes: dict | None = Field(
+        default=None,
+        sa_column=Column(JSONB, nullable=True),
+        description="Array of default tax preferences as JSONB. Format: {'taxes': [{'tax_name': 'GST', 'tax_rate': '5.00'}, {'tax_name': 'QST', 'tax_rate': '9.975'}]}"
+    )
+    
+    created_at: datetime = Field(
+        default_factory=create_audit_datetime,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    updated_at: datetime = Field(
+        default_factory=create_audit_datetime,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    is_email_verified: bool = Field(default=False)
+
+    # Billing fields (denormalized for fast access checks)
+    stripe_customer_id: str | None = Field(
+        default=None,
+        max_length=255,
+        unique=True,
+        description="Stripe Customer ID (cus_xxx) - cached for quick lookups"
+    )
+    subscription_status: str = Field(
+        default="none",
+        max_length=50,
+        description="Cached subscription status: none, active, past_due, canceled, trialing"
+    )
+    subscription_tier: str = Field(
+        default="free",
+        max_length=50,
+        description="User tier (free, premium) - used for feature gating"
+    )
+    current_period_end: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+        description="Cached from user_subscriptions - for quick access checks"
+    )
+    trial_ends_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+        description="Trial expiration timestamp - users retain access until this date"
+    )
+
+    # Tenant Portal seat management (GitHub-style: single limit field, real-time counting)
+    tenant_portal_seat_limit: int = Field(
+        default=2,
+        description="Maximum tenant portal seats (2 free + any purchased subscriptions)"
+    )
+
+    properties: list["Property"] = Relationship(back_populates="owner")
+
+    # Define tenant_details relationship directly
+    tenant_details: Optional["Tenant"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"foreign_keys": "[Tenant.user_id]"}
+    )
+    maintenance_requests: list["MaintenanceRequest"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+
+    # Integration connections (QuickBooks, Xero, etc.)
+    integrations: list["Integration"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+
+    # Ownership entities (companies, individuals, etc. that own units)
+    ownership_entities: list["OwnershipEntity"] = Relationship(
+        back_populates="owner",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+    
+    # Custom calendar reminders
+    custom_reminders: list["CustomReminder"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+    
+    # Vendor associations (join table)
+    vendor_associations: list["UserVendor"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+

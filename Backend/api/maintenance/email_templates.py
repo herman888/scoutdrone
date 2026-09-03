@@ -1,0 +1,435 @@
+"""
+Maintenance & Vendor Email Templates
+
+Professional email templates for maintenance request notifications
+using the Brikli brand design system.
+"""
+from typing import Optional
+from decimal import Decimal
+from datetime import date
+
+from Backend.api.notifications.email_templates import (
+    BrikliEmailTemplate,
+    EmailSection,
+    EmailNotice,
+    EmailCTA,
+    EmailMetadataRow
+)
+from Backend.models.enums import MaintenancePriority, MaintenanceStatus
+
+
+class VendorEmailTemplates:
+    """Email templates for vendor notifications"""
+    
+    @staticmethod
+    def create_vendor_assignment_email(
+        vendor_name: str,
+        vendor_email: str,
+        landlord_name: str,
+        landlord_email: str,
+        landlord_phone: Optional[str],
+        property_address: str,
+        unit_number: Optional[str],
+        tenant_name: Optional[str],
+        tenant_phone: Optional[str],
+        issue_title: str,
+        issue_description: Optional[str],
+        priority: MaintenancePriority,
+        estimated_cost: Optional[Decimal],
+        scheduled_date: Optional[date],
+        photos: Optional[list[str]],
+        request_id: int,
+        frontend_url: str,
+        custom_message: Optional[str] = None
+    ) -> tuple[str, str]:
+        """
+        Generate email for vendor assignment notification.
+        
+        Returns:
+            tuple: (subject, html_body)
+        """
+        
+        # Build greeting
+        greeting = f"Hi {vendor_name}," if vendor_name else "Hi there,"
+        
+        # Build content sections
+        sections = [
+            EmailSection(
+                text=f"{landlord_name} is requesting your services for a maintenance issue at one of their properties."
+            ),
+        ]
+        
+        # Add custom message if provided
+        if custom_message:
+            sections.append(
+                EmailSection(
+                    text=f'"{custom_message}"',
+                    is_bold=True
+                )
+            )
+        
+        sections.append(
+            EmailSection(
+                text=f"Please contact {landlord_name} at {landlord_email}" + (f" or {landlord_phone}" if landlord_phone else "") + " to discuss the work, pricing, and scheduling."
+            )
+        )
+        
+        # Build metadata rows
+        metadata = [
+            EmailMetadataRow(label="Property", value=property_address, emoji="📍"),
+        ]
+        
+        if unit_number:
+            metadata.append(EmailMetadataRow(label="Unit", value=unit_number, emoji="🏠"))
+        
+        if tenant_name:
+            tenant_contact = tenant_name
+            if tenant_phone:
+                tenant_contact += f" | {tenant_phone}"
+            metadata.append(EmailMetadataRow(label="Tenant", value=tenant_contact, emoji="👤"))
+        
+        # Issue details section
+        metadata.append(EmailMetadataRow(label="Issue", value=issue_title, emoji="🔧"))
+        metadata.append(
+            EmailMetadataRow(
+                label="Priority", 
+                value=BrikliEmailTemplate.get_priority_badge_html(priority.value),
+                is_html=True  # Mark as HTML to prevent escaping
+            )
+        )
+        
+        if issue_description:
+            sections.append(
+                EmailSection(text=f"Description: {issue_description}")
+            )
+        
+        if estimated_cost:
+            metadata.append(
+                EmailMetadataRow(
+                    label="Est. Cost", 
+                    value=f"${estimated_cost:,.2f}", 
+                    emoji="💰"
+                )
+            )
+        
+        if scheduled_date:
+            metadata.append(
+                EmailMetadataRow(
+                    label="Scheduled", 
+                    value=scheduled_date.strftime("%B %d, %Y"), 
+                    emoji="📅"
+                )
+            )
+        
+        # Landlord contact
+        landlord_contact = landlord_name
+        if landlord_phone:
+            landlord_contact += f" | {landlord_phone}"
+        landlord_contact += f" | {landlord_email}"
+        metadata.append(EmailMetadataRow(label="Landlord", value=landlord_contact, emoji="📞"))
+        
+        # Next steps notice
+        notice = EmailNotice(
+            emoji="📞",
+            title="How to Proceed",
+            message=f"Contact {landlord_name} directly to discuss this opportunity. They can provide additional details, photos, and coordinate scheduling with the tenant.",
+            color="#10b981",  # green
+            bg_color="#ecfdf5"
+        )
+        
+        # Photos notice (if any)
+        if photos and len(photos) > 0:
+            notice = EmailNotice(
+                emoji="📷",
+                title="Photos Available",
+                message=f"This request includes {len(photos)} photo(s). Contact {landlord_name} to view them and discuss the scope of work.",
+                color="#10b981",  # green
+                bg_color="#ecfdf5"
+            )
+        
+        # No CTA button - vendor portal doesn't exist yet, email is self-contained
+        cta = None
+        
+        # Generate email
+        subject = f"Service Request from {landlord_name} - {property_address}"
+        html_body = BrikliEmailTemplate.create_email(
+            title="Maintenance Service Request",
+            greeting=greeting,
+            sections=sections,
+            metadata=metadata,
+            cta=cta,
+            notice=notice,
+            footer_note=f"You're receiving this email because {landlord_name} would like to engage your services. This message was sent via Brikli, their property management platform."
+        )
+        
+        return subject, html_body
+    
+    @staticmethod
+    def create_tenant_status_update_email(
+        tenant_name: str,
+        tenant_email: str,
+        property_address: str,
+        unit_number: Optional[str],
+        issue_title: str,
+        old_status: MaintenanceStatus,
+        new_status: MaintenanceStatus,
+        vendor_name: Optional[str],
+        vendor_company: Optional[str],
+        vendor_phone: Optional[str],
+        vendor_email: Optional[str],
+        request_id: int,
+        tenant_portal_url: str
+    ) -> tuple[str, str]:
+        """
+        Generate email for tenant status update (Uber Eats style).
+
+        Args:
+            tenant_portal_url: URL to tenant portal (e.g., https://tenant.brikli.com)
+
+        Returns:
+            tuple: (subject, html_body)
+        """
+
+        # Build greeting
+        greeting = f"Hi {tenant_name},"
+
+        # Status progression visual
+        status_progression = VendorEmailTemplates._get_status_progression_html(new_status)
+
+        # Build content sections
+        status_message = VendorEmailTemplates._get_status_message(new_status, vendor_company or vendor_name)
+        sections = [
+            EmailSection(text=f"Your maintenance request has been updated: {issue_title}"),
+            EmailSection(text=status_message, is_bold=True)
+        ]
+
+        # Build metadata
+        metadata = [
+            EmailMetadataRow(label="Property", value=property_address, emoji="📍"),
+        ]
+
+        if unit_number:
+            metadata.append(EmailMetadataRow(label="Unit", value=unit_number, emoji="🏠"))
+
+        metadata.append(
+            EmailMetadataRow(
+                label="Status",
+                value=f"{old_status.value.replace('_', ' ').title()} → {new_status.value.replace('_', ' ').title()}"
+            )
+        )
+
+        # Vendor contact (if assigned and in progress/completed)
+        notice = None
+        if (vendor_name or vendor_company) and new_status in [MaintenanceStatus.IN_PROGRESS, MaintenanceStatus.SCHEDULED, MaintenanceStatus.COMPLETED]:
+            vendor_display = vendor_company or vendor_name
+            vendor_details = []
+            if vendor_phone:
+                vendor_details.append(f"📞 {vendor_phone}")
+            if vendor_email:
+                vendor_details.append(f"📧 {vendor_email}")
+
+            vendor_info_text = f"Vendor: {vendor_display}"
+            if vendor_details:
+                vendor_info_text += "\n" + " | ".join(vendor_details)
+
+            notice = EmailNotice(
+                emoji="🔧",
+                title="Vendor Contact",
+                message=vendor_info_text,
+                color="#10b981",  # green
+                bg_color="#ecfdf5"
+            )
+
+        # CTA - Link to tenant portal maintenance page
+        view_request_url = f"{tenant_portal_url}/maintenance"
+        cta = EmailCTA(
+            text="View Request Details",
+            url=view_request_url
+        )
+        
+        # Add status progression HTML (custom section)
+        custom_html_section = f"""
+      <div style="background-color: #f9fafb; border-radius: 10px; padding: 20px; margin: 24px 0;">
+        <h3 style="font-size: 14px; font-weight: 600; color: #111827; margin: 0 0 16px 0; text-transform: uppercase;">Progress</h3>
+        {status_progression}
+      </div>
+"""
+        
+        # Generate email with custom section
+        subject = f"Maintenance Update - {issue_title}"
+        base_html = BrikliEmailTemplate.create_email(
+            title="Maintenance Request Update",
+            greeting=greeting,
+            sections=sections,
+            metadata=metadata,
+            cta=cta,
+            notice=notice,
+            footer_note="You're receiving this email because you opted in to maintenance request notifications."
+        )
+        
+        # Insert custom section before CTA
+        html_body = base_html.replace(
+            '<div class="cta">',
+            custom_html_section + '\n      <div class="cta">'
+        )
+        
+        return subject, html_body
+    
+    @staticmethod
+    def _get_status_progression_html(current_status: MaintenanceStatus) -> str:
+        """Generate visual status progression (horizontal stepper, email-safe using tables)"""
+
+        # Define the steps with their corresponding statuses
+        steps = [
+            ("Submitted", [MaintenanceStatus.NEW, MaintenanceStatus.PENDING, MaintenanceStatus.IN_PROGRESS, MaintenanceStatus.SCHEDULED, MaintenanceStatus.COMPLETED]),
+            ("Assigned", [MaintenanceStatus.IN_PROGRESS, MaintenanceStatus.SCHEDULED, MaintenanceStatus.COMPLETED]),
+            ("In Progress", [MaintenanceStatus.IN_PROGRESS, MaintenanceStatus.COMPLETED]),
+            ("Completed", [MaintenanceStatus.COMPLETED])
+        ]
+
+        # Determine current step index
+        current_index = 0
+        if current_status == MaintenanceStatus.NEW or current_status == MaintenanceStatus.PENDING:
+            current_index = 0
+        elif current_status == MaintenanceStatus.SCHEDULED:
+            current_index = 1
+        elif current_status == MaintenanceStatus.IN_PROGRESS:
+            current_index = 2
+        elif current_status == MaintenanceStatus.COMPLETED:
+            current_index = 4  # All completed
+
+        # Build horizontal stepper using table for email compatibility
+        html = '''<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto;">
+          <tr>'''
+
+        for i, (label, completed_statuses) in enumerate(steps):
+            is_completed = current_status in completed_statuses
+            is_current = (i == current_index) and not is_completed
+
+            # Circle colors
+            if is_completed:
+                bg_color = "#10b981"  # green
+                text_color = "#ffffff"
+                icon = "✓"
+            elif is_current:
+                bg_color = "#3b82f6"  # blue
+                text_color = "#ffffff"
+                icon = str(i + 1)
+            else:
+                bg_color = "#e5e7eb"  # gray
+                text_color = "#9ca3af"
+                icon = str(i + 1)
+
+            # Label color
+            label_color = "#111827" if (is_completed or is_current) else "#9ca3af"
+            label_weight = "600" if is_current else "400"
+
+            # Connector line (not on last item)
+            connector = ""
+            if i < len(steps) - 1:
+                line_color = "#10b981" if is_completed else "#e5e7eb"
+                connector = f'''<td width="20%" style="padding: 0;">
+              <div style="height: 3px; background-color: {line_color}; margin-top: -12px;"></div>
+            </td>'''
+
+            html += f'''
+            <td width="15%" align="center" style="vertical-align: top; padding: 0 4px;">
+              <table cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="center" style="width: 28px; height: 28px; background-color: {bg_color}; border-radius: 50%; font-size: 12px; font-weight: bold; color: {text_color};">
+                    {icon}
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center" style="padding-top: 6px; font-size: 11px; color: {label_color}; font-weight: {label_weight}; white-space: nowrap;">
+                    {label}
+                  </td>
+                </tr>
+              </table>
+            </td>
+            {connector}'''
+
+        html += '''
+          </tr>
+        </table>'''
+
+        return html
+    
+    @staticmethod
+    def _get_status_message(status: MaintenanceStatus, vendor_name: Optional[str]) -> str:
+        """Get friendly status message for tenant"""
+        
+        messages = {
+            MaintenanceStatus.PENDING: "Your request has been submitted and is awaiting assignment.",
+            MaintenanceStatus.IN_PROGRESS: f"Work has begun{' by ' + vendor_name if vendor_name else ''}. We'll notify you when it's complete.",
+            MaintenanceStatus.COMPLETED: "The work has been completed! Please verify everything is resolved.",
+            MaintenanceStatus.CANCELLED: "This maintenance request has been cancelled."
+        }
+        
+        return messages.get(status, "Your maintenance request status has been updated.")
+    
+    @staticmethod
+    def create_landlord_confirmation_email(
+        landlord_name: str,
+        vendor_name: str,
+        vendor_company: Optional[str],
+        property_address: str,
+        unit_number: Optional[str],
+        issue_title: str,
+        request_id: int,
+        frontend_url: str
+    ) -> tuple[str, str]:
+        """
+        Generate confirmation email for landlord after assigning vendor.
+        
+        Returns:
+            tuple: (subject, html_body)
+        """
+        
+        greeting = f"Hi {landlord_name},"
+        vendor_display = vendor_company or vendor_name
+        
+        sections = [
+            EmailSection(
+                text=f"You've successfully assigned {vendor_display} to your maintenance request."
+            ),
+            EmailSection(
+                text="The vendor has been notified and will receive all the request details."
+            )
+        ]
+        
+        metadata = [
+            EmailMetadataRow(label="Property", value=property_address, emoji="📍"),
+            EmailMetadataRow(label="Vendor", value=vendor_display, emoji="🔧"),
+            EmailMetadataRow(label="Issue", value=issue_title, emoji="📋")
+        ]
+        
+        if unit_number:
+            metadata.insert(1, EmailMetadataRow(label="Unit", value=unit_number, emoji="🏠"))
+        
+        view_request_url = f"{frontend_url}/maintenance/{request_id}"
+        cta = EmailCTA(
+            text="View Request",
+            url=view_request_url
+        )
+        
+        notice = EmailNotice(
+            emoji="✅",
+            title="What's Next?",
+            message="The vendor will contact you or the tenant directly to schedule the work. You'll receive updates as the status changes.",
+            color="#10b981",
+            bg_color="#ecfdf5"
+        )
+        
+        subject = f"Vendor Assigned - {property_address}"
+        html_body = BrikliEmailTemplate.create_email(
+            title="Vendor Successfully Assigned",
+            greeting=greeting,
+            sections=sections,
+            metadata=metadata,
+            cta=cta,
+            notice=notice
+        )
+        
+        return subject, html_body
+

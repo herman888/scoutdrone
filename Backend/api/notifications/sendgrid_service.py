@@ -1,0 +1,504 @@
+"""
+SendGrid Email Service
+
+Handles sending email notifications using Azure SendGrid.
+"""
+import base64
+import logging
+from typing import Optional, Dict, Any
+
+import sentry_sdk
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import (
+    Mail, Email, To, CustomArg, TrackingSettings, ClickTracking,
+    Attachment, FileContent, FileName, FileType, Disposition
+)
+
+from Backend.config import settings
+from Backend.api.notifications.email_templates import (
+    BrikliEmailTemplate,
+    EmailSection,
+    EmailCTA,
+    EmailMetadataRow,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class SendGridService:
+    """Service for sending emails via SendGrid"""
+    
+    @staticmethod
+    def _get_sendgrid_client() -> Optional[SendGridAPIClient]:
+        """
+        Get SendGrid client instance.
+        
+        Returns:
+            SendGridAPIClient if configured, None otherwise
+        """
+        if not settings.SENDGRID_API_KEY:
+            logger.warning("SendGrid API key not configured")
+            return None
+        
+        return SendGridAPIClient(settings.SENDGRID_API_KEY)
+    
+    @staticmethod
+    def _create_html_template(
+        notification_type: str,
+        title: str,
+        message: str,
+        link: Optional[str] = None,
+        icon: str = "🔔"
+    ) -> str:
+        """
+        Generate responsive HTML email template.
+        
+        Args:
+            notification_type: Type of notification
+            title: Email title
+            message: Email message
+            link: Optional action link
+            icon: Emoji icon for the notification
+            
+        Returns:
+            HTML string for email body
+        """
+        # Action button HTML
+        action_button = ''
+        if link:
+            # Ensure link is absolute
+            if not link.startswith('http'):
+                base_url = settings.FRONTEND_URL or 'https://app.brikli.com'
+                link = f"{base_url}{link}"
+            
+            action_button = f'''
+            <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin: 32px auto;">
+                <tr>
+                    <td style="border-radius: 8px; background: #14b8a6;">
+                        <a href="{link}" target="_blank" style="background: #14b8a6; border: none; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 16px; line-height: 24px; text-decoration: none; padding: 12px 24px; color: #ffffff; display: inline-block; border-radius: 8px; font-weight: 500;">
+                            View Details
+                        </a>
+                    </td>
+                </tr>
+            </table>
+            '''
+        
+        # Full HTML template
+        html = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <meta http-equiv="X-UA-Compatible" content="IE=edge">
+            <title>{title}</title>
+            <!--[if mso]>
+            <style type="text/css">
+                body, table, td {{font-family: Arial, Helvetica, sans-serif !important;}}
+            </style>
+            <![endif]-->
+        </head>
+        <body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f3f4f6;">
+                <tr>
+                    <td style="padding: 40px 20px;">
+                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" style="margin: 0 auto; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                            <!-- Header -->
+                            <tr>
+                                <td style="background: linear-gradient(135deg, #14b8a6 0%, #0891b2 100%); padding: 32px 24px; text-align: center; border-radius: 12px 12px 0 0;">
+                                    <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.5px;">
+                                        🏠 Brikli Property Management
+                                    </h1>
+                                </td>
+                            </tr>
+                            
+                            <!-- Icon -->
+                            <tr>
+                                <td style="padding: 32px 24px 0; text-align: center;">
+                                    <div style="font-size: 48px; line-height: 1; margin-bottom: 16px;">
+                                        {icon}
+                                    </div>
+                                </td>
+                            </tr>
+                            
+                            <!-- Content -->
+                            <tr>
+                                <td style="padding: 0 24px 32px;">
+                                    <h2 style="color: #111827; font-size: 20px; font-weight: 600; margin: 0 0 16px 0; text-align: center;">
+                                        {title}
+                                    </h2>
+                                    <p style="color: #4b5563; font-size: 16px; line-height: 1.6; margin: 0 0 24px 0; text-align: center;">
+                                        {message}
+                                    </p>
+                                    {action_button}
+                                </td>
+                            </tr>
+                            
+                            <!-- Footer -->
+                            <tr>
+                                <td style="padding: 24px; text-align: center; border-top: 1px solid #e5e7eb;">
+                                    <p style="color: #6b7280; font-size: 14px; line-height: 1.5; margin: 0 0 8px 0;">
+                                        This is an automated notification from Brikli Property Management.
+                                    </p>
+                                    <p style="margin: 0;">
+                                        <a href="{settings.FRONTEND_URL or 'https://app.brikli.com'}/settings?tab=notifications" style="color: #14b8a6; text-decoration: none; font-size: 14px;">
+                                            Manage notification preferences
+                                        </a>
+                                    </p>
+                                </td>
+                            </tr>
+                        </table>
+                        
+                        <!-- Footer copyright -->
+                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" style="margin: 20px auto 0;">
+                            <tr>
+                                <td style="text-align: center; color: #9ca3af; font-size: 12px;">
+                                    <p style="margin: 0;">
+                                        © 2025 Brikli Property Management. All rights reserved.
+                                    </p>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+        </body>
+        </html>
+        """
+        
+        return html
+    
+    @staticmethod
+    def _get_notification_icon(notification_type: str) -> str:
+        """Get emoji icon for notification type"""
+        icon_map = {
+            'rent_reminder': '💰',
+            'lease_expiring': '📅',
+            'system_update': 'ℹ️',
+        }
+        return icon_map.get(notification_type, '🔔')
+    
+    @staticmethod
+    async def send_email(
+        to_email: str,
+        to_name: str,
+        subject: str,
+        notification_type: str,
+        title: str,
+        message: str,
+        link: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """
+        Send an email via SendGrid using the standard Brikli email template.
+
+        Args:
+            to_email: Recipient email address
+            to_name: Recipient name
+            subject: Email subject line
+            notification_type: Type of notification
+            title: Email title (displayed in body)
+            message: Email message content
+            link: Optional action link
+            metadata: Optional additional metadata
+
+        Returns:
+            True if email sent successfully, False otherwise
+        """
+        try:
+            client = SendGridService._get_sendgrid_client()
+            if not client:
+                logger.error("SendGrid client not configured")
+                return False
+
+            # Build email content using standard Brikli template
+            greeting = f"Hi {to_name.split()[0] if to_name else 'there'},"
+            sections = [EmailSection(text=message)]
+
+            # Build metadata rows for payment notifications
+            metadata_rows = []
+            if metadata and notification_type == "payment_received":
+                if metadata.get("amount_cents"):
+                    amount = int(metadata["amount_cents"]) / 100
+                    metadata_rows.append(
+                        EmailMetadataRow(label="Amount", value=f"${amount:,.2f}", emoji="💰")
+                    )
+                if metadata.get("payment_method_type"):
+                    pm_type = metadata["payment_method_type"]
+                    pm_display = "Bank Transfer" if pm_type == "acss_debit" else "Card"
+                    metadata_rows.append(
+                        EmailMetadataRow(label="Payment Method", value=pm_display, emoji="💳")
+                    )
+
+            # Build CTA if link provided
+            cta = None
+            if link:
+                # Ensure link is absolute
+                if not link.startswith('http'):
+                    base_url = settings.FRONTEND_URL or 'https://app.brikli.com'
+                    link = f"{base_url}{link}"
+                cta = EmailCTA(text="View Details", url=link)
+
+            # Footer note based on notification type
+            footer_notes = {
+                "payment_received": "You're receiving this email because you have payment notifications enabled.",
+                "rent_reminder": "You're receiving this email because you have rent reminder notifications enabled.",
+                "lease_expiring": "You're receiving this email because you have lease expiration notifications enabled.",
+                "maintenance_update": "You're receiving this email because you have maintenance update notifications enabled.",
+            }
+            footer_note = footer_notes.get(notification_type, "Thank you for using Brikli Property Management.")
+
+            # Generate HTML using standard Brikli template
+            html_content = BrikliEmailTemplate.create_email(
+                title=title,
+                greeting=greeting,
+                sections=sections,
+                metadata=metadata_rows if metadata_rows else None,
+                cta=cta,
+                footer_note=footer_note,
+            )
+
+            # Create email message
+            from_email = Email(settings.SENDGRID_FROM_EMAIL, settings.SENDGRID_FROM_NAME)
+            to_email_obj = To(to_email, to_name)
+
+            mail = Mail(
+                from_email=from_email,
+                to_emails=to_email_obj,
+                subject=subject,
+                html_content=html_content
+            )
+
+            # Disable click tracking to prevent SSL certificate errors
+            tracking_settings = TrackingSettings()
+            tracking_settings.click_tracking = ClickTracking(enable=False, enable_text=False)
+            mail.tracking_settings = tracking_settings
+
+            # Send email in thread executor to avoid blocking event loop
+            import asyncio
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, client.send, mail)
+
+            if response.status_code in [200, 201, 202]:
+                logger.info(
+                    f"Email sent successfully to {to_email}",
+                    extra={
+                        'to_email': to_email,
+                        'notification_type': notification_type,
+                        'status_code': response.status_code
+                    }
+                )
+                return True
+            else:
+                logger.error(
+                    f"SendGrid API returned non-success status: {response.status_code}",
+                    extra={
+                        'status_code': response.status_code,
+                        'body': response.body,
+                        'headers': dict(response.headers)
+                    }
+                )
+                return False
+
+        except Exception as e:
+            logger.exception(f"Failed to send email to {to_email}")
+            sentry_sdk.capture_exception(e, extra={
+                'to_email': to_email,
+                'notification_type': notification_type,
+            })
+            return False
+    
+    @staticmethod
+    async def send_raw_email(
+        to_email: str,
+        to_name: str,
+        subject: str,
+        html_content: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """
+        Send an email with raw HTML content via SendGrid.
+        
+        Use this for custom-generated HTML emails (e.g., vendor notifications).
+        
+        Args:
+            to_email: Recipient email address
+            to_name: Recipient name
+            subject: Email subject line
+            html_content: Complete HTML email content
+            metadata: Optional additional metadata for tracking
+            
+        Returns:
+            True if email sent successfully, False otherwise
+        """
+        try:
+            client = SendGridService._get_sendgrid_client()
+            if not client:
+                logger.error("SendGrid client not configured")
+                return False
+            
+            # Create email message
+            from_email = Email(settings.SENDGRID_FROM_EMAIL, settings.SENDGRID_FROM_NAME)
+            to_email_obj = To(to_email, to_name)
+            
+            mail = Mail(
+                from_email=from_email,
+                to_emails=to_email_obj,
+                subject=subject,
+                html_content=html_content
+            )
+            
+            # Add metadata as custom args for tracking
+            if metadata:
+                if 'email_type' in metadata:
+                    mail.add_custom_arg(CustomArg('email_type', str(metadata.get('email_type', 'custom'))))
+                if 'request_id' in metadata:
+                    mail.add_custom_arg(CustomArg('request_id', str(metadata.get('request_id', ''))))
+                if 'event_type' in metadata:
+                    mail.add_custom_arg(CustomArg('event_type', str(metadata.get('event_type', ''))))
+            
+            # Disable SendGrid click tracking to prevent SSL certificate errors
+            # SendGrid wraps links with tracking domains (e.g., url6739.brikli.com) which may not have valid certs
+            tracking_settings = TrackingSettings()
+            tracking_settings.click_tracking = ClickTracking(enable=False, enable_text=False)
+            mail.tracking_settings = tracking_settings
+            
+            # Send email in thread executor to avoid blocking event loop
+            import asyncio
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, client.send, mail)
+            
+            if response.status_code in [200, 201, 202]:
+                logger.info(
+                    f"Raw HTML email sent successfully to {to_email}",
+                    extra={
+                        'to_email': to_email,
+                        'status_code': response.status_code,
+                        'metadata': metadata
+                    }
+                )
+                return True
+            else:
+                logger.error(
+                    f"SendGrid API returned non-success status: {response.status_code}",
+                    extra={
+                        'status_code': response.status_code,
+                        'body': response.body,
+                        'headers': dict(response.headers)
+                    }
+                )
+                return False
+                
+        except Exception as e:
+            logger.exception(f"Failed to send raw HTML email to {to_email}")
+            sentry_sdk.capture_exception(e, extra={
+                'to_email': to_email,
+                'metadata': metadata
+            })
+            return False
+    
+    @staticmethod
+    async def send_email_with_attachment(
+        to_email: str,
+        to_name: str,
+        subject: str,
+        html_content: str,
+        attachment_bytes: bytes,
+        attachment_filename: str,
+        attachment_type: str = "application/pdf",
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """
+        Send an email with a file attachment via SendGrid.
+        
+        Perfect for sending invoices as PDF attachments.
+        
+        Args:
+            to_email: Recipient email address
+            to_name: Recipient name
+            subject: Email subject line
+            html_content: Complete HTML email content
+            attachment_bytes: File content as bytes
+            attachment_filename: Filename for the attachment (e.g., "Invoice-123.pdf")
+            attachment_type: MIME type (default: "application/pdf")
+            metadata: Optional additional metadata for tracking
+            
+        Returns:
+            True if email sent successfully, False otherwise
+        """
+        try:
+            client = SendGridService._get_sendgrid_client()
+            if not client:
+                logger.error("SendGrid client not configured")
+                return False
+            
+            # Create email message
+            from_email = Email(settings.SENDGRID_FROM_EMAIL, settings.SENDGRID_FROM_NAME)
+            to_email_obj = To(to_email, to_name)
+            
+            mail = Mail(
+                from_email=from_email,
+                to_emails=to_email_obj,
+                subject=subject,
+                html_content=html_content
+            )
+            
+            # Add PDF attachment
+            encoded_file = base64.b64encode(attachment_bytes).decode()
+            
+            attached_file = Attachment(
+                FileContent(encoded_file),
+                FileName(attachment_filename),
+                FileType(attachment_type),
+                Disposition('attachment')
+            )
+            mail.add_attachment(attached_file)
+            
+            # Add metadata as custom args for tracking
+            if metadata:
+                for key, value in metadata.items():
+                    if value is not None:
+                        mail.add_custom_arg(CustomArg(key, str(value)))
+            
+            # Disable SendGrid click tracking to prevent SSL certificate errors
+            tracking_settings = TrackingSettings()
+            tracking_settings.click_tracking = ClickTracking(enable=False, enable_text=False)
+            mail.tracking_settings = tracking_settings
+            
+            # Send email in thread executor to avoid blocking event loop
+            import asyncio
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, client.send, mail)
+            
+            if response.status_code in [200, 201, 202]:
+                logger.info(
+                    f"Email with attachment sent successfully to {to_email}",
+                    extra={
+                        'to_email': to_email,
+                        'status_code': response.status_code,
+                        'attachment_filename': attachment_filename,
+                        'attachment_size_kb': len(attachment_bytes) / 1024,
+                        'metadata': metadata
+                    }
+                )
+                return True
+            else:
+                logger.error(
+                    f"SendGrid API returned non-success status: {response.status_code}",
+                    extra={
+                        'status_code': response.status_code,
+                        'body': response.body,
+                        'headers': dict(response.headers)
+                    }
+                )
+                return False
+                
+        except Exception as e:
+            logger.exception(f"Failed to send email with attachment to {to_email}")
+            sentry_sdk.capture_exception(e, extra={
+                'to_email': to_email,
+                'attachment_filename': attachment_filename,
+                'metadata': metadata
+            })
+            return False
+

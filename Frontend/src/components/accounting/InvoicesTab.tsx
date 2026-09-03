@@ -1,0 +1,946 @@
+import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
+import { toast } from "react-toastify";
+import { CSVLink } from "react-csv";
+import CSVImportModal from "./modals/CSVImportModal";
+import InvoicePaymentsBanner from "./InvoicePaymentsBanner";
+import { InvoicesTableSkeleton } from "../ui/skeletons";
+import { INVOICE_STATUSES } from "../../utils/constants";
+import { 
+  useInvoices, 
+  useDeleteInvoice,
+  useMarkInvoicePaid 
+} from "../../hooks/useAccountingQueries";
+import { importInvoicesFromCSV, getInvoicePdfSecureUrl } from "../../utils/api/accounting";
+import useProperties from "../../hooks/useProperties";
+import { fetchTenants } from "../../utils/api/tenants";
+import { getTenantDisplayName } from "../../utils/tenantUtils";
+import { useSubscriptionGuard } from "../../hooks/useSubscriptionGuard";
+import type { Invoice, InvoiceQueryParams, InvoicesResponse } from "../../types/accounting";
+
+interface TableColumn {
+  key: string;
+  label: string;
+  align: "left" | "center" | "right";
+}
+
+const invoiceTableColumns: TableColumn[] = [
+  { key: "invoice_number", label: "Invoice #", align: "left" },
+  { key: "recipient", label: "Recipient", align: "left" },
+  { key: "amount", label: "Amount", align: "center" },
+  { key: "issue_date", label: "Issue Date", align: "center" },
+  { key: "due_date", label: "Due Date", align: "center" },
+  { key: "status", label: "Status", align: "center" },
+  { key: "source", label: "Source", align: "center" },
+  { key: "actions", label: "Actions", align: "center" },
+];
+
+
+interface PropertyUnit {
+  property_id: number;
+  unit_id?: number;
+}
+
+interface Tenant {
+  id: number;
+  full_name?: string;
+  first_name?: string;
+  last_name?: string;
+  company_name?: string;
+  tenant_type?: string;
+  property_units?: PropertyUnit[];
+}
+
+interface InvoiceFilters {
+  status: string;
+  dateRange: string;
+  property_id: string;
+  tenant_id: string;
+  search: string;
+}
+
+interface InvoicesPagination {
+  currentPage: number;
+  limit: number;
+  hasMore: boolean;
+}
+
+interface CSVHeader {
+  label: string;
+  key: string;
+}
+
+interface CSVDataRow {
+  invoice_number: string;
+  recipient: string;
+  property: string;
+  amount: string;
+  description: string;
+  issue_date: string;
+  due_date: string;
+  status: string;
+  source: string;
+}
+
+const InvoicesTab: React.FC = () => {
+  const navigate = useNavigate();
+  
+  // Subscription guard for premium features
+  const guardAction = useSubscriptionGuard({ featureName: 'creating invoices' });
+
+  // Remove unused useAccounting hook
+  // const { } = useAccounting();
+
+  // Local state for invoices tab
+  const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [invoiceFilters, setInvoiceFilters] = useState<InvoiceFilters>({
+    status: "all",
+    dateRange: "all_time",
+    property_id: "all",
+    tenant_id: "all",
+    search: "",
+  });
+  const [invoicesPagination, setInvoicesPagination] = useState<InvoicesPagination>({
+    currentPage: 0,
+    limit: 15,
+    hasMore: true,
+  });
+
+  // Build query parameters
+  const queryParams = useMemo<InvoiceQueryParams>(() => {
+    const params: InvoiceQueryParams = {
+      limit: invoicesPagination.limit,
+      offset: invoicesPagination.currentPage * invoicesPagination.limit,
+    };
+    
+    if (invoiceFilters.status !== "all") {
+      params.status = invoiceFilters.status;
+    }
+
+    if (invoiceFilters.property_id !== "all" && invoiceFilters.property_id.trim()) {
+      const propertyId = parseInt(invoiceFilters.property_id);
+      if (!isNaN(propertyId)) {
+        params.property_id = propertyId;
+      }
+    }
+
+    if (invoiceFilters.tenant_id !== "all" && invoiceFilters.tenant_id.trim()) {
+      const tenantId = parseInt(invoiceFilters.tenant_id);
+      if (!isNaN(tenantId)) {
+        params.tenant_id = tenantId;
+      }
+    }
+
+    if (invoiceFilters.search) {
+      params.search = invoiceFilters.search;
+    }
+
+    // Convert date range to actual date params based on issue_date
+    const today = new Date();
+    if (invoiceFilters.dateRange === "week") {
+      const weekAgo = new Date();
+      weekAgo.setDate(today.getDate() - 7);
+      params.start_date = weekAgo.toLocaleDateString('en-CA');
+      params.end_date = today.toLocaleDateString('en-CA');
+    } else if (invoiceFilters.dateRange === "month") {
+      const monthAgo = new Date();
+      monthAgo.setMonth(today.getMonth() - 1);
+      params.start_date = monthAgo.toLocaleDateString('en-CA');
+      params.end_date = today.toLocaleDateString('en-CA');
+    } else if (invoiceFilters.dateRange === "quarter") {
+      const quarterAgo = new Date();
+      quarterAgo.setMonth(today.getMonth() - 3);
+      params.start_date = quarterAgo.toLocaleDateString('en-CA');
+      params.end_date = today.toLocaleDateString('en-CA');
+    } else if (invoiceFilters.dateRange === "year") {
+      const yearAgo = new Date();
+      yearAgo.setFullYear(today.getFullYear() - 1);
+      params.start_date = yearAgo.toLocaleDateString('en-CA');
+      params.end_date = today.toLocaleDateString('en-CA');
+    }
+
+    return params;
+  }, [invoiceFilters, invoicesPagination.currentPage, invoicesPagination.limit]);
+
+  // TanStack Query hooks
+  const { data: invoicesData, isLoading: loading, error, refetch } = useInvoices(queryParams);
+  const { properties } = useProperties();
+  const deleteInvoiceMutation = useDeleteInvoice();
+  const markInvoicePaidMutation = useMarkInvoicePaid();
+
+  // Extract invoices and pagination info
+  const invoices = useMemo<Invoice[]>(() => {
+    if (invoicesData && Array.isArray(invoicesData)) {
+      return invoicesData as Invoice[];
+    } else if (invoicesData && (invoicesData as InvoicesResponse).items) {
+      return (invoicesData as InvoicesResponse).items || [];
+    }
+    return [];
+  }, [invoicesData]);
+
+  const hasMore = useMemo<boolean>(() => {
+    if (invoicesData && Array.isArray(invoicesData)) {
+      return (invoicesData as Invoice[]).length === invoicesPagination.limit;
+    } else if (invoicesData && (invoicesData as InvoicesResponse).has_more !== undefined) {
+      return (invoicesData as InvoicesResponse).has_more || false;
+    }
+    return false;
+  }, [invoicesData, invoicesPagination.limit]);
+
+  // Modal states
+  const [showCSVImportModal, setShowCSVImportModal] = useState<boolean>(false);
+
+  // Load tenants on mount (not using TanStack Query for this yet as it's a different domain)
+  const loadTenants = useCallback(async () => {
+    try {
+      const data = await fetchTenants();
+      setTenants(data || []);
+    } catch (err) {
+      setTenants([]);
+    }
+  }, []);
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setInvoicesPagination((prev) => ({ ...prev, currentPage: 0 }));
+  }, [invoiceFilters]);
+
+  // Update pagination state when query data changes
+  useEffect(() => {
+    if (invoicesData) {
+      setInvoicesPagination((prev) => ({ ...prev, hasMore }));
+    }
+  }, [invoicesData, hasMore]);
+
+  // Load tenants on component mount
+  useEffect(() => {
+    loadTenants();
+  }, [loadTenants]);
+
+  const getStatusBadgeClass = (status?: string): string => {
+    switch (status?.toLowerCase()) {
+      case "paid":
+        return "badge-success";
+      case "pending":
+        return "badge-warning";
+      case "overdue":
+        return "badge-danger";
+      case "partial":
+        return "badge-warning";
+      case "cancelled":
+      case "void":
+        return "badge-secondary";
+      case "draft":
+        return "badge-info";
+      default:
+        return "badge-info";
+    }
+  };
+
+  const getDueDateClass = (dueDate: string, status?: string): string => {
+    if (status?.toLowerCase() === "paid") {
+      return "text-gray-500";
+    }
+    
+    const due = new Date(dueDate);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    due.setHours(0, 0, 0, 0);
+    
+    if (due < today) {
+      return "text-red-600 font-medium"; // Overdue
+    } else if (due.getTime() === today.getTime()) {
+      return "text-yellow-600 font-medium"; // Due today
+    } else {
+      const daysDiff = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      if (daysDiff <= 3) {
+        return "text-orange-600 font-medium"; // Due soon
+      }
+      return "text-gray-500"; // Normal
+    }
+  };
+
+  const handleEditInvoice = (invoice: Invoice) => {
+    // Draft invoices: Navigate to full edit page
+    if (invoice.is_draft || invoice.status?.toLowerCase() === 'draft') {
+      navigate(`/accounting/invoices/${invoice.id}/edit`);
+    } else {
+      // Finalized invoices are immutable for audit compliance
+      toast.info(
+        "Finalized invoices cannot be edited for accounting compliance. " +
+        "To update payment status, use the 'Mark as Paid' button.",
+        { autoClose: 6000 }
+      );
+    }
+  };
+
+  const handleDeleteInvoice = async (invoiceId: number) => {
+    const invoiceToDelete = invoices.find((inv) => inv.id === invoiceId);
+    const invoiceDescription = invoiceToDelete
+      ? `Invoice #${invoiceToDelete.invoice_number}`
+      : `Invoice ID ${invoiceId}`;
+
+    if (
+      window.confirm(
+        `Are you sure you want to delete ${invoiceDescription}? This action cannot be undone.`
+      )
+    ) {
+      try {
+        await deleteInvoiceMutation.mutateAsync(invoiceId);
+        toast.success(`${invoiceDescription} deleted successfully.`);
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : "Failed to delete invoice.";
+        toast.error(errorMessage);
+      }
+    }
+  };
+
+  const handleMarkPaid = async (invoiceId: number) => {
+    const invoiceToUpdate = invoices.find((inv) => inv.id === invoiceId);
+    
+    // Prevent marking Stripe invoices as paid (Stripe is source of truth)
+    if (invoiceToUpdate?.stripe_invoice_id) {
+      toast.warning(
+        "This invoice is managed by Stripe. Payment status will automatically sync from Stripe.",
+        { autoClose: 5000 }
+      );
+      return;
+    }
+    
+    const invoiceDescription = invoiceToUpdate
+      ? `Invoice #${invoiceToUpdate.invoice_number}`
+      : `Invoice ID ${invoiceId}`;
+
+    if (
+      window.confirm(
+        `Mark ${invoiceDescription} as paid?`
+      )
+    ) {
+      try {
+        await markInvoicePaidMutation.mutateAsync(invoiceId);
+        toast.success(`${invoiceDescription} marked as paid.`);
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : "Failed to mark invoice as paid.";
+        toast.error(errorMessage);
+      }
+    }
+  };
+
+  const handleDownloadPdf = async (invoiceId: number) => {
+    try {
+      // Get secure URL with SAS token (follows proven lease document pattern)
+      const { secure_url } = await getInvoicePdfSecureUrl(invoiceId);
+      // Open in new window - URL has SAS token so no auth needed
+      window.open(secure_url, '_blank', 'noopener,noreferrer');
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to download PDF.";
+      toast.error(errorMessage);
+    }
+  };
+
+  const handleNextPage = () => {
+    setInvoicesPagination((prev) => ({
+      ...prev,
+      currentPage: prev.currentPage + 1,
+    }));
+  };
+
+  const handlePreviousPage = () => {
+    setInvoicesPagination((prev) => ({
+      ...prev,
+      currentPage: Math.max(0, prev.currentPage - 1),
+    }));
+  };
+
+  const handleCreateInvoice = guardAction(() => {
+    navigate('/accounting/invoices/new');
+  });
+
+  const handleCSVImportSuccess = () => {
+    setShowCSVImportModal(false);
+    refetch(); // Refresh the invoices list
+    toast.success("Invoices imported successfully!");
+  };
+
+  const filteredTenants = useMemo<Tenant[]>(() => {
+    return tenants.filter(tenant => {
+      if (invoiceFilters.property_id === "all") return true;
+      return tenant.property_units?.some(unit => 
+        unit.property_id === parseInt(invoiceFilters.property_id)
+      );
+    });
+  }, [tenants, invoiceFilters.property_id]);
+
+  // CSV Export configuration
+  const csvHeaders: CSVHeader[] = [
+    { label: 'Invoice Number', key: 'invoice_number' },
+    { label: 'Recipient', key: 'recipient' },
+    { label: 'Property', key: 'property' },
+    { label: 'Amount', key: 'amount' },
+    { label: 'Description', key: 'description' },
+    { label: 'Issue Date', key: 'issue_date' },
+    { label: 'Due Date', key: 'due_date' },
+    { label: 'Status', key: 'status' },
+    { label: 'Source', key: 'source' },
+  ];
+
+  // Format data for CSV export with clean headers
+  const getFilterDescription = (): string => {
+    const filters: string[] = [];
+    if (invoiceFilters.status !== 'all') filters.push(`Status: ${invoiceFilters.status}`);
+    if (invoiceFilters.dateRange !== 'all_time') filters.push(`Date Range: ${invoiceFilters.dateRange.replace('_', ' ')}`);
+    if (invoiceFilters.property_id !== 'all') {
+      const propId = String(invoiceFilters.property_id);
+      const propertyName = Array.isArray(properties) 
+        ? properties.find(p => String(p.id) === propId)?.name 
+        : undefined;
+      filters.push(`Property: ${propertyName || 'Selected Property'}`);
+    }
+    if (invoiceFilters.tenant_id !== 'all') {
+      const tenantId = String(invoiceFilters.tenant_id);
+      const tenantName = Array.isArray(tenants) 
+        ? tenants.find(t => String(t.id) === tenantId)?.full_name 
+        : undefined;
+      filters.push(`Tenant: ${tenantName || 'Selected Tenant'}`);
+    }
+    if (invoiceFilters.search) filters.push(`Search: "${invoiceFilters.search}"`);
+    return filters.length > 0 ? filters.join(', ') : 'No filters applied';
+  };
+
+  const csvData: CSVDataRow[] = [
+    // Clean header with metadata in a single row
+    { 
+      invoice_number: 'Brikli Invoices Report', 
+      recipient: `Exported: ${new Date().toLocaleDateString()}`,
+      property: `Records: ${invoices.length}`,
+      amount: `Filters: ${getFilterDescription()}`,
+      description: '', 
+      issue_date: '', 
+      due_date: '', 
+      status: '', 
+      source: '' 
+    },
+    // Empty separator row
+    { invoice_number: '', recipient: '', property: '', amount: '', description: '', issue_date: '', due_date: '', status: '', source: '' },
+    // Actual data
+    ...invoices.map(invoice => {
+      const amount = Number(invoice?.amount ?? 0);
+      const issueDate = invoice?.issue_date ? new Date(invoice.issue_date) : null;
+      const dueDate = invoice?.due_date ? new Date(invoice.due_date) : null;
+      
+      // Try snapshot fields first, fall back to linked entities
+      let recipient = invoice?.recipient_company || invoice?.recipient_name;
+      if (!recipient && invoice?.tenant) {
+        recipient = getTenantDisplayName(invoice.tenant, '');
+      }
+      if (!recipient && invoice?.ownership_entity) {
+        recipient = invoice.ownership_entity.name;
+      }
+      if (!recipient && invoice?.vendor) {
+        recipient = invoice.vendor.company_name;
+      }
+      recipient = recipient || 'N/A';
+      
+      return {
+        invoice_number: invoice?.invoice_number || 'N/A',
+        recipient: recipient,
+        property: invoice?.property?.name || '',
+        amount: Number.isFinite(amount) ? amount.toFixed(2) : '0.00',
+        description: invoice?.description || 'N/A',
+        issue_date: issueDate && !isNaN(issueDate.getTime()) ? issueDate.toLocaleDateString() : 'N/A',
+        due_date: dueDate && !isNaN(dueDate.getTime()) ? dueDate.toLocaleDateString() : 'N/A',
+        status: invoice?.status || 'N/A',
+        source: invoice?.quickbooks_id ? 'QuickBooks' : 'Brikli',
+      };
+    })
+  ];
+
+  // Generate professional filename with current date and filters
+  const generateFilename = (): string => {
+    const now = new Date();
+    const dateStr = now.toISOString().split('T')[0];
+    const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '');
+    const filterSuffix = invoiceFilters.status !== 'all' ? `-${invoiceFilters.status}` : '';
+    const searchSuffix = invoiceFilters.search ? `-search` : '';
+    return `Brikli-Invoices-Report${filterSuffix}${searchSuffix}-${dateStr}-${timeStr}.csv`;
+  };
+
+  // CSV Import configuration
+  const csvImportConfig = {
+    title: "Import Invoices",
+    description: "Import invoices from your CSV file",
+    expectedHeaders: [
+      { key: 'invoice_number', label: 'Invoice Number', required: true, aliases: ['invoice #', 'invoice_num', 'number', 'invoicenumber'] },
+      { key: 'amount', label: 'Amount', required: true, type: 'number', aliases: ['total', 'cost', 'price'] },
+      { key: 'description', label: 'Description', required: true, aliases: ['desc', 'details', 'item'] },
+      { key: 'issue_date', label: 'Issue Date', required: true, type: 'date', aliases: ['date', 'created', 'issued', 'issuedate'] },
+      { key: 'due_date', label: 'Due Date', required: true, type: 'date', aliases: ['payment_due', 'expires', 'duedate'] },
+      { key: 'status', label: 'Status', required: false, aliases: ['payment_status', 'state'] },
+      { key: 'property_name', label: 'Property Name', required: false, aliases: ['property', 'building', 'location', 'propertyname'] },
+      { key: 'tenant_name', label: 'Tenant Name', required: false, aliases: ['tenant', 'customer', 'client', 'tenantname'] }
+    ],
+    apiFunction: importInvoicesFromCSV,
+    sampleData: [
+      {
+        invoice_number: 'INV-001',
+        amount: '1500.00',
+        description: 'Monthly rent - January',
+        issue_date: '2024-01-01',
+        due_date: '2024-01-31',
+        status: 'PENDING',
+        property_name: 'Downtown Apartments',
+        tenant_name: 'John Doe'
+      },
+      {
+        invoice_number: 'INV-002',
+        amount: '2000.00',
+        description: 'Monthly rent - February',
+        issue_date: '2024-02-01',
+        due_date: '2024-02-28',
+        status: 'PAID',
+        property_name: 'Sunset Tower',
+        tenant_name: 'Jane Smith'
+      }
+    ],
+    validationTips: [
+      'Invoice numbers should be unique across your system',
+      'Amounts should be positive numbers (no $ signs or commas needed)',
+      'Dates should be in YYYY-MM-DD format for best results',
+      'Property and tenant names must match existing records exactly',
+      'Status can be PENDING, PAID, OVERDUE, or CANCELLED'
+    ]
+  };
+
+  if (loading) {
+    return <InvoicesTableSkeleton rowCount={8} />;
+  }
+
+  return (
+    <div>
+      {error && (
+        <div className="bg-red-100 dark:bg-red-900/20 border border-red-400 dark:border-red-700 text-red-700 dark:text-red-400 px-4 py-3 rounded">
+          <p>{String(error)}</p>
+          <button
+            onClick={() => refetch()}
+            className="mt-2 bg-red-500 dark:bg-red-600 hover:bg-red-700 dark:hover:bg-red-500 text-white font-bold py-1 px-2 rounded text-sm"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Stripe Connect Banner */}
+      <InvoicePaymentsBanner dismissible={true} />
+
+      {/* Filters */}
+      <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-sm">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+          {/* Status Filter */}
+          <div>
+            <label
+              htmlFor="invoice-status"
+              className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+            >
+              Status
+            </label>
+            <select
+              id="invoice-status"
+              className="block w-full rounded-md border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 py-2 pl-3 pr-10 text-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              value={invoiceFilters.status}
+              onChange={(e) =>
+                setInvoiceFilters({
+                  ...invoiceFilters,
+                  status: e.target.value,
+                })
+              }
+            >
+              <option value="all">All Statuses</option>
+              {INVOICE_STATUSES.map((status: string) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Date Range Filter */}
+          <div>
+            <label
+              htmlFor="invoice-date-range"
+              className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+            >
+              Date Range
+            </label>
+            <select
+              id="invoice-date-range"
+              className="block w-full rounded-md border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 py-2 pl-3 pr-10 text-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              value={invoiceFilters.dateRange}
+              onChange={(e) =>
+                setInvoiceFilters({
+                  ...invoiceFilters,
+                  dateRange: e.target.value,
+                })
+              }
+            >
+              <option value="all_time">All time</option>
+              <option value="week">Last 7 days</option>
+              <option value="month">Last 30 days</option>
+              <option value="quarter">Last 90 days</option>
+              <option value="year">Last year</option>
+            </select>
+          </div>
+
+          {/* Property Filter */}
+          <div>
+            <label
+              htmlFor="invoice-property"
+              className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+            >
+              Property
+            </label>
+            <select
+              id="invoice-property"
+              className="block w-full rounded-md border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 py-2 pl-3 pr-10 text-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              value={invoiceFilters.property_id}
+              onChange={(e) =>
+                setInvoiceFilters({
+                  ...invoiceFilters,
+                  property_id: e.target.value,
+                  tenant_id: "all", // Reset tenant filter when property changes
+                })
+              }
+            >
+              <option value="all">All Properties</option>
+              {properties.map((property) => (
+                <option key={property.id} value={property.id}>
+                  {property.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Tenant Filter */}
+          <div>
+            <label
+              htmlFor="invoice-tenant"
+              className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+            >
+              Tenant
+            </label>
+            <select
+              id="invoice-tenant"
+              className="block w-full rounded-md border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 py-2 pl-3 pr-10 text-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              value={invoiceFilters.tenant_id}
+              onChange={(e) =>
+                setInvoiceFilters({
+                  ...invoiceFilters,
+                  tenant_id: e.target.value,
+                })
+              }
+            >
+              <option value="all">All Tenants</option>
+              {filteredTenants.map((tenant) => (
+                <option key={tenant.id} value={tenant.id}>
+                  {tenant.full_name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Search Bar and Action Buttons */}
+        <div className="flex items-center justify-between">
+          <div className="relative rounded-md shadow-sm flex-1 max-w-md">
+            <input
+              type="search"
+              placeholder="Search invoices..."
+              className="focus:ring-blue-500 focus:border-blue-500 block w-full pl-10 pr-3 py-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md text-sm"
+              value={invoiceFilters.search}
+              onChange={(e) =>
+                setInvoiceFilters({
+                  ...invoiceFilters,
+                  search: e.target.value,
+                })
+              }
+            />
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <i className="fas fa-search text-gray-400 dark:text-gray-500"></i>
+            </div>
+          </div>
+          
+          <div className="flex items-center space-x-4 ml-4">
+            {/* Import CSV Button */}
+            <button
+              onClick={() => setShowCSVImportModal(true)}
+              className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-800"
+            >
+              <i className="fas fa-upload mr-2"></i>
+              Import CSV
+            </button>
+            
+            {/* Export CSV Button */}
+            <CSVLink
+              data={csvData}
+              headers={csvHeaders}
+              filename={generateFilename()}
+              className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-800"
+            >
+              <i className="fas fa-download mr-2"></i>
+              Export CSV
+            </CSVLink>
+            
+            {/* New Invoice Button */}
+            <button
+              onClick={handleCreateInvoice}
+              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 dark:bg-blue-700 hover:bg-blue-700 dark:hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-800"
+            >
+              <i className="fas fa-plus mr-2"></i>
+              New Invoice
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Invoices Table */}
+      <div className="dark-panel dark-shadow rounded-lg overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="data-table min-w-full divide-y dark-divider">
+            <thead className="dark-input">
+              <tr>
+                {invoiceTableColumns.map((col) => (
+                  <th
+                    key={col.key}
+                    scope="col"
+                    className={`px-6 py-3 ${
+                      col.align === "center" ? "text-center" : "text-left"
+                    } text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider`}
+                  >
+                    {col.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="dark-panel divide-y dark-divider">
+              {invoices.length > 0 ? (
+                invoices.map((invoice) => {
+                  return (
+                  <tr key={invoice.id}>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-900 dark:hover:text-blue-300 cursor-pointer">
+                        #{invoice.invoice_number}
+                      </div>
+                      {invoice.description && (
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate max-w-32">
+                          {invoice.description}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm">
+                        {(() => {
+                          // Determine recipient name
+                          let recipientDisplay = null;
+                          
+                          // Try snapshot fields first (for finalized invoices)
+                          if (invoice.recipient_company || invoice.recipient_name) {
+                            recipientDisplay = (
+                              <>
+                                <div className="font-medium text-gray-900 dark:text-gray-100">
+                                  {invoice.recipient_company || invoice.recipient_name}
+                                </div>
+                                {invoice.recipient_company && invoice.recipient_name && (
+                                  <div className="text-gray-500 dark:text-gray-400 text-xs">
+                                    {invoice.recipient_name}
+                                  </div>
+                                )}
+                              </>
+                            );
+                          } else if (invoice.tenant) {
+                            // Fall back to linked tenant
+                            recipientDisplay = (
+                              <div className="font-medium text-gray-900 dark:text-gray-100">
+                                {getTenantDisplayName(invoice.tenant, 'N/A')}
+                              </div>
+                            );
+                          } else if (invoice.ownership_entity) {
+                            // Fall back to linked ownership entity (for drafts)
+                            recipientDisplay = (
+                              <div className="font-medium text-gray-900 dark:text-gray-100">
+                                {invoice.ownership_entity.name}
+                              </div>
+                            );
+                          } else if (invoice.vendor) {
+                            // Fall back to linked vendor (for drafts)
+                            recipientDisplay = (
+                              <div className="font-medium text-gray-900 dark:text-gray-100">
+                                {invoice.vendor.company_name}
+                              </div>
+                            );
+                          } else {
+                            // No recipient found
+                            recipientDisplay = (
+                              <div className="text-gray-400 dark:text-gray-500 italic">
+                                No recipient
+                              </div>
+                            );
+                          }
+                          
+                          // Add property context if available
+                          return (
+                            <>
+                              {recipientDisplay}
+                              {invoice.property && (
+                                <div className="text-gray-500 dark:text-gray-400 text-xs mt-1">
+                                  <i className="fas fa-building mr-1"></i>
+                                  {invoice.property.name}
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-center">
+                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                        ${parseFloat(invoice.amount).toFixed(2)}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-center">
+                      <div className="text-sm text-gray-500 dark:text-gray-400">
+                        {new Date(invoice.issue_date).toLocaleDateString()}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-center">
+                      <div className={`text-sm ${getDueDateClass(invoice.due_date, invoice.status)}`}>
+                        {new Date(invoice.due_date).toLocaleDateString()}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex justify-center">
+                        <span
+                          className={`badge ${getStatusBadgeClass(invoice.status)}`}
+                        >
+                          {invoice.status.charAt(0).toUpperCase() +
+                            invoice.status.slice(1).toLowerCase()}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-500 dark:text-gray-400">
+                      {invoice.quickbooks_id != null ? "QuickBooks" : "Brikli"}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
+                      <div className="flex justify-center space-x-2">
+                        {invoice.pdf_blob_url && (
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadPdf(invoice.id)}
+                            className="text-blue-600 dark:text-blue-400 hover:text-blue-900 dark:hover:text-blue-300 p-1"
+                            title="Download PDF"
+                          >
+                            <i className="fas fa-file-pdf" />
+                          </button>
+                        )}
+                        {invoice.status?.toLowerCase() !== "paid" && !invoice.stripe_invoice_id && invoice.is_draft !== true && (
+                          <button
+                            type="button"
+                            onClick={() => handleMarkPaid(invoice.id)}
+                            className="text-green-600 dark:text-green-400 hover:text-green-900 dark:hover:text-green-300 p-1"
+                            title="Mark as Paid"
+                          >
+                            <i className="fas fa-check-circle" />
+                          </button>
+                        )}
+                        {invoice.is_draft === true && (
+                          <button
+                            type="button"
+                            onClick={() => handleEditInvoice(invoice)}
+                            className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-900 dark:hover:text-indigo-300 p-1"
+                            title="Continue Draft"
+                          >
+                            <i className="fas fa-arrow-right" />
+                          </button>
+                        )}
+                        {invoice.is_draft === true && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteInvoice(invoice.id)}
+                            className="text-red-600 dark:text-red-400 hover:text-red-900 dark:hover:text-red-300 p-1"
+                            title="Delete Invoice"
+                          >
+                            <i className="fas fa-trash-alt" />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td
+                    colSpan={invoiceTableColumns.length}
+                    className="px-6 py-12 text-center text-sm text-gray-500 dark:text-gray-400"
+                  >
+                    <div className="flex flex-col items-center">
+                      <i className="fas fa-file-invoice-dollar text-gray-300 dark:text-gray-600 text-4xl mb-4"></i>
+                      <p className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">No invoices found</p>
+                      <p className="text-gray-500 dark:text-gray-400 mb-4">Get started by creating your first invoice.</p>
+                      <button
+                        onClick={handleCreateInvoice}
+                        className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"
+                      >
+                        <i className="fas fa-plus mr-2"></i>
+                        Create Invoice
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        
+        {/* Pagination Controls */}
+        {invoices.length > 0 && (
+          <div className="flex justify-between items-center mt-4 p-4 dark-input dark-divider border-t">
+            <button
+              type="button"
+              onClick={handlePreviousPage}
+              disabled={invoicesPagination.currentPage === 0 || loading}
+              className="inline-flex items-center px-4 py-2 dark-divider border rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 dark-panel hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              aria-label="Go to previous page"
+            >
+              <i className="fas fa-arrow-left mr-2" aria-hidden="true" />
+              Previous
+            </button>
+            <span className="text-sm text-gray-700 dark:text-gray-300">
+              Page {invoicesPagination.currentPage + 1}
+            </span>
+            <button
+              type="button"
+              onClick={handleNextPage}
+              disabled={!invoicesPagination.hasMore || loading}
+              className="inline-flex items-center px-4 py-2 dark-divider border rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 dark-panel hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              aria-label="Go to next page"
+            >
+              Next
+              <i className="fas fa-arrow-right ml-2" aria-hidden="true" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* CSV Import Modal */}
+      {showCSVImportModal && (
+        <CSVImportModal
+          isOpen={showCSVImportModal}
+          onClose={() => setShowCSVImportModal(false)}
+          onSuccess={handleCSVImportSuccess}
+          config={csvImportConfig}
+        />
+      )}
+    </div>
+  );
+};
+
+export default InvoicesTab;
